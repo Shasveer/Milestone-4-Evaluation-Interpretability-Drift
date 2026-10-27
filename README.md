@@ -53,7 +53,9 @@ writes a global SHAP summary image plus local force-plot HTML files to
 	mean-absolute attribution data, and saves local force plots for up to three
 	holdout claims.
 - `temporal_validation()` uses `TimeSeriesSplit(n_splits=4)` on ordered data
-	and reports fold-level recall/F1 and latest-fold degradation.
+	and reports fold-level plus calendar-quarter recall/F1. The latest quarter's
+	F1 is compared with the mean of earlier evaluated quarters and flagged when
+	it falls by more than 10%.
 - `calculate_psi_drift()` bins numerical features at expected-distribution
 	quantiles (or uses category bins), smooths empty bins, and reports PSI as
 	stable, monitor, or retrain. `should_retrain()` combines the configured PSI

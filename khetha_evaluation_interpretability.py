@@ -194,6 +194,8 @@ class KhethaEvaluator:
         plt.tight_layout()
         plt.savefig(summary_path, bbox_inches="tight")
         plt.close()
+        if not summary_path.is_file() or summary_path.stat().st_size == 0:
+            raise OSError(f"SHAP summary plot was not written: {summary_path}")
 
         local_plots = []
         for sample_index in range(min(3, sample_count)):
@@ -206,6 +208,8 @@ class KhethaEvaluator:
             )
             force_path = output_path / f"shap_force_claim_{sample_index + 1}.html"
             shap.save_html(str(force_path), force_plot)
+            if not force_path.is_file() or force_path.stat().st_size == 0:
+                raise OSError(f"SHAP force plot was not written: {force_path}")
             local_plots.append(str(force_path))
 
         return {
@@ -295,7 +299,8 @@ class KhethaEvaluator:
             edges = np.unique(np.quantile(expected.astype(float), np.linspace(0, 1, 11)))
             if edges.size < 2:
                 center = float(edges[0])
-                edges = np.array([-np.inf, center, np.inf])
+                half_width = max(abs(center) * 1e-6, 1e-6)
+                edges = np.array([-np.inf, center - half_width, center + half_width, np.inf])
             else:
                 edges[0], edges[-1] = -np.inf, np.inf
             expected_counts = np.histogram(expected.astype(float), bins=edges)[0]
@@ -414,11 +419,8 @@ def main():
     LOGGER.info("Feature drift: %s", psi_result)
     LOGGER.info("Retraining decision: %s", retraining)
 
-    try:
-        explanations = evaluator.apply_shap_explanations(n_samples=50)
-        LOGGER.info("SHAP artifacts: %s", explanations)
-    except (ImportError, ValueError, TypeError) as error:
-        LOGGER.warning("SHAP explanations could not be generated: %s", error)
+    explanations = evaluator.apply_shap_explanations(n_samples=50)
+    LOGGER.info("SHAP artifacts: %s", explanations)
 
 
 if __name__ == "__main__":
