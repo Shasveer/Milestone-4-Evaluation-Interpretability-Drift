@@ -230,12 +230,21 @@ class KhethaEvaluator:
         else:
             dates = pd.to_datetime(np.asarray(current_date_col), errors="coerce")
             features = X_historical
-        order = np.argsort(np.asarray(dates), kind="stable")
+
+        date_values = np.asarray(dates)
+        labels = np.asarray(y_historical)
+        if len(date_values) != len(labels) or len(features) != len(labels):
+            raise ValueError("Historical features, labels, and dates must have matching lengths")
+        valid_indices = np.flatnonzero(~pd.isna(date_values))
+        if len(valid_indices) < 5:
+            raise ValueError("At least five valid dated samples are required for TimeSeriesSplit")
+        features = self._slice_rows(features, valid_indices)
+        labels = labels[valid_indices]
+        date_values = date_values[valid_indices]
+        order = np.argsort(date_values, kind="stable")
         features = self._slice_rows(features, order)
-        labels = np.asarray(y_historical)[order]
-        sorted_dates = np.asarray(dates)[order]
-        if len(labels) < 5:
-            raise ValueError("At least five chronological samples are required for TimeSeriesSplit")
+        labels = labels[order]
+        sorted_dates = date_values[order]
 
         splitter = TimeSeriesSplit(n_splits=4)
         fold_metrics = []
@@ -272,9 +281,14 @@ class KhethaEvaluator:
                 "validation_samples": len(actual),
             })
 
-        prior_f1 = float(np.mean([quarter["f1"] for quarter in quarter_metrics[:-1]]))
-        latest_f1 = quarter_metrics[-1]["f1"]
-        relative_f1_decay = 0.0 if prior_f1 <= 0 else max(0.0, (prior_f1 - latest_f1) / prior_f1)
+        if not quarter_metrics:
+            raise ValueError("No valid calendar quarters were available for evaluation")
+        prior_quarters = quarter_metrics[:-1]
+        prior_f1 = float(np.mean([quarter["f1"] for quarter in prior_quarters])) if prior_quarters else 0.0
+        latest_f1 = float(quarter_metrics[-1]["f1"])
+        relative_f1_decay = (
+            max(0.0, (prior_f1 - latest_f1) / prior_f1) if prior_f1 > 0 else 0.0
+        )
         return {
             "folds": fold_metrics,
             "quarters": quarter_metrics,
@@ -283,7 +297,7 @@ class KhethaEvaluator:
             "baseline_f1": prior_f1,
             "latest_f1": latest_f1,
             "relative_f1_decay": relative_f1_decay,
-            "performance_drop_gt_10_percent": relative_f1_decay > 0.10,
+            "performance_drop_gt_10_percent": bool(prior_quarters) and relative_f1_decay > 0.10,
         }
 
     def calculate_psi_drift(self, feature_name, expected_dist, actual_dist):
@@ -353,22 +367,38 @@ def _load_config():
 def _prepare_claim_data():
     claims_path = ROOT / "claims_data.csv"
     claims = pd.read_csv(claims_path, parse_dates=["claim_date"])
-    claims = claims.dropna(subset=["fraud_label", "claim_date"]).sort_values("claim_date", kind="stable")
+    claims = (
+        claims.dropna(subset=["fraud_label", "claim_date"])
+        .sort_values("claim_date", kind="stable")
+        .reset_index(drop=True)
+    )
+    if claims.empty:
+        raise ValueError("No valid claims with labels and dates were found")
     target = claims["fraud_label"].astype(int).to_numpy()
+    dates = claims["claim_date"].copy()
     excluded = {
         "claim_id", "fraud_label", "investigation_outcome", "claim_settlement_date", "claim_date"
     }
-    features = claims.drop(columns=[column for column in excluded if column in claims.columns])
-    categorical = features.select_dtypes(include=["object", "string", "bool"]).columns
-    numeric = features.select_dtypes(exclude=["object", "string", "bool"]).columns
-    features = pd.get_dummies(features, columns=list(categorical), dummy_na=True, dtype=float)
-    features[numeric] = features[numeric].apply(pd.to_numeric, errors="coerce")
-    features = features.replace([np.inf, -np.inf], np.nan)
-    features = features.fillna(features.median()).fillna(0.0).astype(float)
-    split_index = int(len(features) * 0.8)
-    if split_index < 5 or len(features) - split_index < 1:
+    raw_features = claims.drop(columns=[column for column in excluded if column in claims.columns])
+    split_index = int(len(raw_features) * 0.8)
+    if split_index < 5 or len(raw_features) - split_index < 1:
         raise ValueError("claims_data.csv does not contain enough labelled rows to evaluate")
-    return features, target, claims["claim_date"].reset_index(drop=True), split_index
+
+    train_raw = raw_features.iloc[:split_index].copy()
+    test_raw = raw_features.iloc[split_index:].copy()
+    categorical = train_raw.select_dtypes(
+        include=["object", "string", "bool", "category"]
+    ).columns.tolist()
+    X_train = pd.get_dummies(train_raw, columns=categorical, dummy_na=True, dtype=float)
+    X_test = pd.get_dummies(test_raw, columns=categorical, dummy_na=True, dtype=float)
+    X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+    X_train = X_train.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    X_test = X_test.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    medians = X_train.median().fillna(0.0)
+    X_train = X_train.fillna(medians).fillna(0.0)
+    X_test = X_test.fillna(medians).fillna(0.0)
+    features = pd.concat([X_train, X_test], axis=0, ignore_index=True).astype(float)
+    return features, target, dates, split_index
 
 
 def _fit_milestone3_model(X_train, y_train, X_test, y_test):

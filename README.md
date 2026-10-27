@@ -34,11 +34,14 @@ python khetha_evaluation_interpretability.py
 ```
 
 The script sorts claims by `claim_date`, uses the first 80% for training and
-the most recent 20% as a holdout, and excludes identifiers and post-claim
-investigation outcomes from model features. It then fits the Milestone 3
-optimizer when available, prints evaluation and monitoring summaries, and
-writes a global SHAP summary image plus local force-plot HTML files to
-`khetha_artifacts/`.
+the most recent 20% as a holdout. Categorical columns and numeric imputation
+medians are learned from the training period only, then applied to the holdout
+with the same feature schema. Identifiers and post-claim investigation
+outcomes are excluded from model features. It then fits the Milestone 3
+optimizer, prints evaluation and monitoring summaries, and writes a global
+SHAP summary image plus three local force-plot HTML files to
+`khetha_artifacts/`. SHAP failures stop the run rather than being reported as a
+successful evaluation.
 
 ## Evaluator Capabilities
 
@@ -55,7 +58,8 @@ writes a global SHAP summary image plus local force-plot HTML files to
 - `temporal_validation()` uses `TimeSeriesSplit(n_splits=4)` on ordered data
 	and reports fold-level plus calendar-quarter recall/F1. The latest quarter's
 	F1 is compared with the mean of earlier evaluated quarters and flagged when
-	it falls by more than 10%.
+	it falls by more than 10%. Invalid dates are excluded, and a one-quarter
+	history does not produce a decline alert without a historical baseline.
 - `calculate_psi_drift()` bins numerical features at expected-distribution
 	quantiles (or uses category bins), smooths empty bins, and reports PSI as
 	stable, monitor, or retrain. `should_retrain()` combines the configured PSI
