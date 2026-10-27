@@ -26,7 +26,8 @@ because the claim table already includes the fields needed for this milestone.
 
 ## Setup and Run
 
-Use Python 3.9 or newer. From the repository root:
+Use Python 3.12 or newer. The exact dependency versions validated for this
+submission are pinned in `requirements.txt`. From the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
